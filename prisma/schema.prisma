@@ -1,0 +1,287 @@
+// IntegraSiE Smart Dashboard - Prisma Schema
+// Database: PostgreSQL 15+
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  warehouse_operator
+  qc_staff
+  ppic_team
+  factory_manager
+}
+
+enum LotStatus {
+  pending_qc
+  passed
+  rejected
+  ready_to_store
+}
+
+enum QCDecision {
+  passed
+  rejected
+}
+
+enum ZoneType {
+  standard
+  cold_chain
+  hazardous
+}
+
+enum SlotStatus {
+  available
+  occupied
+  reserved
+  maintenance
+}
+
+enum ScheduleStatus {
+  draft
+  confirmed
+  in_progress
+  completed
+}
+
+enum WorkOrderStatus {
+  pending
+  in_progress
+  completed
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique @db.VarChar(255)
+  password_hash String   @db.VarChar(255)
+  full_name     String   @db.VarChar(255)
+  role          UserRole
+  phone_number  String?  @db.VarChar(20)
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  // Relations
+  supplier_intakes      SupplierIntake[]
+  qc_results            QCResult[]
+  drums_placed          Drum[]               @relation("DrumPlacedBy")
+  audit_trails          AuditTrail[]
+  notification_configs  NotificationConfig[]
+  production_schedules  ProductionSchedule[]
+  work_orders_assigned  WorkOrder[]
+
+  @@map("users")
+}
+
+model SupplierIntake {
+  id                  String   @id @default(uuid())
+  supplier_name       String   @db.VarChar(255)
+  material_group      String   @db.VarChar(100)
+  material_group_code String   @db.VarChar(10)
+  quantity            Decimal  @db.Decimal(10, 2)
+  unit                String   @db.VarChar(20)
+  delivery_date       DateTime @db.Date
+  truck_reference     String   @db.VarChar(100)
+  is_locked           Boolean  @default(true)
+  created_by          String?
+  created_at          DateTime @default(now())
+
+  // Relations
+  creator User? @relation(fields: [created_by], references: [id])
+  lots    Lot[]
+
+  @@map("supplier_intakes")
+}
+
+model Lot {
+  id                       String    @id @default(uuid())
+  lot_number               String    @unique @db.VarChar(50)
+  supplier_intake_id       String?
+  status                   LotStatus
+  material_group_code      String    @db.VarChar(10)
+  is_temperature_sensitive Boolean   @default(false)
+  is_hazardous             Boolean   @default(false)
+  hazard_class             String?   @db.VarChar(50)
+  created_at               DateTime  @default(now())
+  updated_at               DateTime  @updatedAt
+
+  // Relations
+  supplier_intake          SupplierIntake?          @relation(fields: [supplier_intake_id], references: [id])
+  qc_results               QCResult[]
+  rack_slots               RackSlot[]               @relation("SlotCurrentLot")
+  drums                    Drum[]
+  production_schedule_lots ProductionScheduleLot[]
+
+  @@map("lots")
+}
+
+model QCResult {
+  id               String     @id @default(uuid())
+  lot_id           String
+  parameters       Json
+  decision         QCDecision
+  rejection_reason String?    @db.Text
+  tested_by        String
+  tested_at        DateTime   @default(now())
+
+  // Relations
+  lot    Lot  @relation(fields: [lot_id], references: [id])
+  tester User @relation(fields: [tested_by], references: [id])
+
+  @@map("qc_results")
+}
+
+model WarehouseZone {
+  id               String   @id @default(uuid())
+  name             String   @db.VarChar(100)
+  zone_type        ZoneType
+  temperature_min  Decimal? @db.Decimal(5, 2)
+  temperature_max  Decimal? @db.Decimal(5, 2)
+  block_identifier String   @db.VarChar(10)
+
+  // Relations
+  rack_slots            RackSlot[]
+  temperature_readings  TemperatureReading[]
+
+  @@map("warehouse_zones")
+}
+
+model RackSlot {
+  id             String     @id @default(uuid())
+  zone_id        String
+  coordinate     String     @unique @db.VarChar(20)
+  row            Int
+  level          Int
+  position       Int
+  status         SlotStatus
+  current_lot_id String?
+
+  // Relations
+  zone        WarehouseZone @relation(fields: [zone_id], references: [id])
+  current_lot Lot?          @relation("SlotCurrentLot", fields: [current_lot_id], references: [id])
+  drums       Drum[]
+
+  @@map("rack_slots")
+}
+
+model Drum {
+  id           String    @id @default(uuid())
+  lot_id       String
+  rack_slot_id String?
+  drum_number  Int
+  weight_kg    Decimal   @db.Decimal(10, 2)
+  placed_at    DateTime?
+  placed_by    String?
+
+  // Relations
+  lot       Lot       @relation(fields: [lot_id], references: [id])
+  rack_slot RackSlot? @relation(fields: [rack_slot_id], references: [id])
+  placer    User?     @relation("DrumPlacedBy", fields: [placed_by], references: [id])
+
+  @@map("drums")
+}
+
+model TemperatureReading {
+  id                  String   @id @default(uuid())
+  zone_id             String
+  temperature_celsius Decimal  @db.Decimal(5, 2)
+  is_breach           Boolean  @default(false)
+  recorded_at         DateTime @default(now())
+
+  // Relations
+  zone WarehouseZone @relation(fields: [zone_id], references: [id])
+
+  @@map("temperature_readings")
+}
+
+model AuditTrail {
+  id          String   @id @default(uuid())
+  user_id     String
+  action      String   @db.VarChar(100)
+  entity_type String   @db.VarChar(50)
+  entity_id   String
+  old_value   Json?
+  new_value   Json
+  timestamp   DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [user_id], references: [id])
+
+  @@map("audit_trails")
+}
+
+model NotificationConfig {
+  id             String  @id @default(uuid())
+  alert_category String  @db.VarChar(50)
+  user_id        String
+  phone_number   String  @db.VarChar(20)
+  is_active      Boolean @default(true)
+
+  // Relations
+  user User @relation(fields: [user_id], references: [id])
+
+  @@map("notification_configs")
+}
+
+model ProductionSchedule {
+  id             String         @id @default(uuid())
+  title          String         @db.VarChar(255)
+  scheduled_date DateTime       @db.Date
+  status         ScheduleStatus
+  created_by     String
+  created_at     DateTime       @default(now())
+
+  // Relations
+  creator     User                    @relation(fields: [created_by], references: [id])
+  lots        ProductionScheduleLot[]
+  work_orders WorkOrder[]
+
+  @@map("production_schedules")
+}
+
+model ProductionScheduleLot {
+  schedule_id       String
+  lot_id            String
+  quantity_required Decimal @db.Decimal(10, 2)
+
+  // Relations
+  schedule ProductionSchedule @relation(fields: [schedule_id], references: [id])
+  lot      Lot                @relation(fields: [lot_id], references: [id])
+
+  @@id([schedule_id, lot_id])
+  @@map("production_schedule_lots")
+}
+
+model WorkOrder {
+  id           String          @id @default(uuid())
+  schedule_id  String
+  assigned_to  String
+  instructions String          @db.Text
+  status       WorkOrderStatus
+  created_at   DateTime        @default(now())
+
+  // Relations
+  schedule ProductionSchedule @relation(fields: [schedule_id], references: [id])
+  assignee User               @relation(fields: [assigned_to], references: [id])
+
+  @@map("work_orders")
+}
+
+model HazardSegregationMatrix {
+  id                   String  @id @default(uuid())
+  hazard_class_a       String  @db.VarChar(50)
+  hazard_class_b       String  @db.VarChar(50)
+  is_compatible        Boolean
+  min_separation_slots Int     @default(0)
+
+  @@map("hazard_segregation_matrix")
+}
