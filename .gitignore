@@ -1,7 +1,10 @@
 # Dependencies
-/node_modules
+node_modules/
 
-# Next.js
+# Build output
+dist/
+
+# Next.js (legacy)
 /.next/
 /out/
 
@@ -26,3 +29,19 @@ yarn-error.log*
 .vscode/mcp.json
 .kiro/settings/mcp.json
 .gemini/antigravity/mcp_config.json
+
+# Coverage
+coverage/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Prisma
+prisma/migrations/
+
+# Vite
+*.local
+
+/generated/prisma
